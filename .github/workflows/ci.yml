@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - develop
+  pull_request:
+    branches:
+      - master
+      - develop
+
+jobs:
+  web:
+    name: Frontend (Nuxt 4)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check if apps/web exists
+        id: check_web
+        run: |
+          if [ -f "apps/web/package.json" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "apps/web/package.json not found yet; skipping web CI."
+          fi
+
+      - name: Setup Node.js
+        if: steps.check_web.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        if: steps.check_web.outputs.exists == 'true'
+        working-directory: apps/web
+        run: |
+          if [ -f "package-lock.json" ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Lint
+        if: steps.check_web.outputs.exists == 'true'
+        working-directory: apps/web
+        run: npm run lint --if-present
+
+      - name: Test
+        if: steps.check_web.outputs.exists == 'true'
+        working-directory: apps/web
+        run: npm test --if-present
+
+      - name: Build
+        if: steps.check_web.outputs.exists == 'true'
+        working-directory: apps/web
+        run: npm run build --if-present
+
+  api:
+    name: Backend (Express 5)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check if apps/api exists
+        id: check_api
+        run: |
+          if [ -f "apps/api/package.json" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "apps/api/package.json not found yet; skipping api CI."
+          fi
+
+      - name: Setup Node.js
+        if: steps.check_api.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        if: steps.check_api.outputs.exists == 'true'
+        working-directory: apps/api
+        run: |
+          if [ -f "package-lock.json" ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Lint
+        if: steps.check_api.outputs.exists == 'true'
+        working-directory: apps/api
+        run: npm run lint --if-present
+
+      - name: Test
+        if: steps.check_api.outputs.exists == 'true'
+        working-directory: apps/api
+        run: npm test --if-present
+
+      - name: Build
+        if: steps.check_api.outputs.exists == 'true'
+        working-directory: apps/api
+        run: npm run build --if-present
+
+  docker-compose-check:
+    name: Validate Docker Compose
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate compose.yaml
+        run: |
+          if [ -f "compose.yaml" ]; then
+            docker compose -f compose.yaml config -q
+          else
+            echo "compose.yaml not found yet; skipping validation."
+          fi
