@@ -19,6 +19,8 @@ jobs:
   schema:
     name: Migration and schema checks (PostgreSQL 16)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: Validate Docker Compose
