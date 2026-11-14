@@ -1,0 +1,34 @@
+name: PostgreSQL schema
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - apps/api/db/**
+      - compose.yaml
+      - .github/workflows/db-schema.yml
+  push:
+    branches: [feature/db-schema]
+    paths:
+      - apps/api/db/**
+      - compose.yaml
+      - .github/workflows/db-schema.yml
+  workflow_dispatch:
+
+jobs:
+  schema:
+    name: Migration and schema checks (PostgreSQL 16)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Docker Compose
+        run: docker compose config -q
+      - name: Initialize a fresh database
+        run: docker compose up -d --wait db
+      - name: Verify schema constraints and relationships
+        run: docker compose exec -T db psql -v ON_ERROR_STOP=1 -U campusfix -d campusfix_dev < apps/api/db/tests/schema.sql
+      - name: Database logs on failure
+        if: failure()
+        run: docker compose logs db

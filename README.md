@@ -1,5 +1,10 @@
 # CampusFix
 
+## Base de datos — Semana 1
+
+El modelo PostgreSQL, las relaciones, los comandos de instalación y la prueba
+del esquema se documentan en [la guía de base de datos](apps/api/db/README.md).
+
 Sistema Full-Stack para el reporte y seguimiento de incidencias en campus universitario.
 
 ## Arquitectura y Stack Tecnológico
