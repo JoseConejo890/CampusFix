@@ -1,10 +1,11 @@
 [build]
   base = "apps/web"
-  command = "npm run build"
-  publish = ".output/public"
+  command = "npx nuxi generate"
+  publish = "dist"
 
 [build.environment]
   NODE_VERSION = "22"
+  NUXT_TELEMETRY_DISABLED = "1"
 
 [[redirects]]
   from = "/*"
