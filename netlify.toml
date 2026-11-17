@@ -1,7 +1,7 @@
 [build]
   base = "apps/web"
   command = "npx nuxi generate"
-  publish = ".output/public"
+  publish = "dist"
 
 [build.environment]
   NODE_VERSION = "22"
