@@ -1,13 +1,333 @@
+<script setup lang="ts">
+interface Incident {
+  id: string
+  title: string
+  description: string
+  location: string
+  category_id: string
+  category_name: string
+  reported_by: string
+  reported_by_name: string
+  created_at: string
+}
+
+interface ApiPayload {
+  incidents?: Incident[]
+  incident?: Incident
+  error?: string
+  details?: string[]
+}
+
+const config = useRuntimeConfig()
+const apiBase = String(config.public.apiBase).replace(/\/+$/, '')
+const incidentsEndpoint = `${apiBase}/incidents`
+
+const incidents = ref<Incident[]>([])
+const isLoading = ref(false)
+const isSubmitting = ref(false)
+const loadError = ref('')
+const submitError = ref('')
+const successMessage = ref('')
+
+const form = reactive({
+  title: '',
+  description: '',
+  location: '',
+  categoryId: '',
+  reportedBy: '',
+})
+
+function getErrorMessage(payload: ApiPayload, fallback: string) {
+  if (payload.error === 'Referenced category or user does not exist') {
+    return 'El ID de categoría o de usuario no existe en la base de datos.'
+  }
+
+  if (payload.error === 'Validation failed') {
+    return 'Revisa los datos requeridos y vuelve a intentarlo.'
+  }
+
+  return payload.error || payload.details?.join(' ') || fallback
+}
+
+async function readPayload(response: Response): Promise<ApiPayload> {
+  try {
+    return await response.json() as ApiPayload
+  } catch {
+    return {}
+  }
+}
+
+async function loadIncidents() {
+  isLoading.value = true
+  loadError.value = ''
+
+  try {
+    const response = await fetch(incidentsEndpoint)
+    const payload = await readPayload(response)
+
+    if (!response.ok) {
+      throw new Error(getErrorMessage(payload, 'No se pudo cargar el listado.'))
+    }
+
+    incidents.value = Array.isArray(payload.incidents) ? payload.incidents : []
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    loadError.value = message && !/failed to fetch|networkerror/i.test(message)
+      ? message
+      : 'No se pudo conectar con la API. Comprueba que Docker Compose esté activo e inténtalo de nuevo.'
+  } finally {
+    isLoading.value = false
+  }
+}
+
+async function submitIncident() {
+  if (isSubmitting.value) {
+    return
+  }
+
+  submitError.value = ''
+  successMessage.value = ''
+  isSubmitting.value = true
+
+  try {
+    const response = await fetch(incidentsEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: form.title.trim(),
+        description: form.description.trim(),
+        location: form.location.trim(),
+        categoryId: form.categoryId.trim(),
+        reportedBy: form.reportedBy.trim(),
+      }),
+    })
+    const payload = await readPayload(response)
+
+    if (!response.ok) {
+      throw new Error(getErrorMessage(payload, 'No se pudo registrar la incidencia.'))
+    }
+
+    if (!payload.incident) {
+      throw new Error('La API no devolvió la incidencia creada.')
+    }
+
+    incidents.value = [
+      payload.incident,
+      ...incidents.value.filter(incident => incident.id !== payload.incident?.id),
+    ]
+    successMessage.value = `La incidencia #${payload.incident.id} se registró correctamente.`
+    Object.assign(form, {
+      title: '',
+      description: '',
+      location: '',
+      categoryId: '',
+      reportedBy: '',
+    })
+  } catch (error) {
+    submitError.value = error instanceof Error
+      ? error.message
+      : 'Ocurrió un error al registrar la incidencia.'
+  } finally {
+    isSubmitting.value = false
+  }
+}
+
+function formatDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+
+  return new Intl.DateTimeFormat('es-MX', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date)
+}
+
+onMounted(() => {
+  void loadIncidents()
+})
+</script>
+
 <template>
-  <main class="grid min-h-screen place-items-center bg-slate-50 px-6 text-slate-900">
-    <section class="max-w-xl text-center">
-      <p class="text-sm font-semibold uppercase tracking-[0.2em] text-blue-700">
-        CampusFix
-      </p>
-      <h1 class="mt-3 text-3xl font-bold">Entorno local listo</h1>
-      <p class="mt-3 text-slate-600">
-        La base del frontend está preparada para el desarrollo del proyecto.
-      </p>
-    </section>
-  </main>
+  <div class="min-h-screen bg-slate-50 text-slate-900">
+    <main id="inicio" class="mx-auto max-w-7xl px-5 py-8 sm:px-8 sm:py-10">
+      <section class="mb-8 rounded-3xl bg-blue-700 px-6 py-8 text-white shadow-lg shadow-blue-900/10 sm:px-9 sm:py-10">
+        <p class="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-blue-100">Servicios universitarios</p>
+        <div class="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+          <div class="max-w-2xl">
+            <h1 class="text-3xl font-bold tracking-tight sm:text-4xl">Reporta una incidencia</h1>
+            <p class="mt-3 max-w-xl text-sm leading-6 text-blue-50 sm:text-base">
+              Describe el problema y consulta los reportes recientes para ayudar a mantener el campus en buenas condiciones.
+            </p>
+          </div>
+          <div class="rounded-2xl border border-white/20 bg-white/10 px-4 py-3 backdrop-blur-sm">
+            <p class="text-xs text-blue-100">Incidencias en el listado</p>
+            <p class="mt-1 text-2xl font-bold">{{ incidents.length }}</p>
+          </div>
+        </div>
+      </section>
+
+      <div class="grid gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <section class="h-fit rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7" aria-labelledby="form-title">
+          <div class="mb-6">
+            <p class="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">Nuevo reporte</p>
+            <h2 id="form-title" class="mt-2 text-2xl font-bold tracking-tight">Cuéntanos qué ocurrió</h2>
+            <p class="mt-2 text-sm leading-6 text-slate-600">Completa los datos para agregar la incidencia al listado.</p>
+          </div>
+
+          <form class="space-y-4" @submit.prevent="submitIncident">
+            <div>
+              <label for="incident-title" class="mb-1.5 block text-sm font-semibold text-slate-700">Título</label>
+              <input
+                id="incident-title"
+                v-model="form.title"
+                class="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                name="title"
+                type="text"
+                maxlength="160"
+                placeholder="Ej. Luminaria fundida"
+                required
+              >
+            </div>
+
+            <div>
+              <label for="incident-description" class="mb-1.5 block text-sm font-semibold text-slate-700">Descripción</label>
+              <textarea
+                id="incident-description"
+                v-model="form.description"
+                class="w-full resize-none rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                name="description"
+                rows="4"
+                maxlength="3000"
+                placeholder="Describe el problema y cualquier detalle útil."
+                required
+              />
+            </div>
+
+            <div>
+              <label for="incident-location" class="mb-1.5 block text-sm font-semibold text-slate-700">Ubicación</label>
+              <input
+                id="incident-location"
+                v-model="form.location"
+                class="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                name="location"
+                type="text"
+                maxlength="200"
+                placeholder="Edificio, aula o zona del campus"
+                required
+              >
+            </div>
+
+            <div class="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label for="category-id" class="mb-1.5 block text-sm font-semibold text-slate-700">ID de categoría</label>
+                <input
+                  id="category-id"
+                  v-model="form.categoryId"
+                  class="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                  name="categoryId"
+                  type="text"
+                  inputmode="numeric"
+                  pattern="[1-9][0-9]*"
+                  placeholder="Ej. 1"
+                  required
+                >
+              </div>
+              <div>
+                <label for="reporter-id" class="mb-1.5 block text-sm font-semibold text-slate-700">ID de quien reporta</label>
+                <input
+                  id="reporter-id"
+                  v-model="form.reportedBy"
+                  class="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                  name="reportedBy"
+                  type="text"
+                  inputmode="numeric"
+                  pattern="[1-9][0-9]*"
+                  placeholder="Ej. 1"
+                  required
+                >
+              </div>
+            </div>
+
+            <p v-if="submitError" class="rounded-xl bg-rose-50 px-3.5 py-3 text-sm text-rose-800" role="alert">
+              {{ submitError }}
+            </p>
+            <p v-if="successMessage" class="rounded-xl bg-emerald-50 px-3.5 py-3 text-sm text-emerald-800" role="status">
+              {{ successMessage }}
+            </p>
+
+            <button
+              class="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-60"
+              type="submit"
+              :disabled="isSubmitting"
+            >
+              <span v-if="isSubmitting" class="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
+              {{ isSubmitting ? 'Registrando…' : 'Registrar incidencia' }}
+            </button>
+          </form>
+        </section>
+
+        <section class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7" aria-labelledby="list-title">
+          <div class="mb-6 flex items-start justify-between gap-4">
+            <div>
+              <p class="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">Listado</p>
+              <h2 id="list-title" class="mt-2 text-2xl font-bold tracking-tight">Incidencias recientes</h2>
+              <p class="mt-2 text-sm text-slate-600">Los reportes más nuevos aparecen primero.</p>
+            </div>
+            <button
+              class="shrink-0 rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800 disabled:opacity-50"
+              type="button"
+              :disabled="isLoading"
+              @click="loadIncidents"
+            >
+              {{ isLoading ? 'Cargando…' : 'Actualizar' }}
+            </button>
+          </div>
+
+          <div v-if="loadError" class="rounded-2xl border border-rose-200 bg-rose-50 p-4" role="alert">
+            <p class="text-sm text-rose-800">{{ loadError }}</p>
+            <button class="mt-3 text-sm font-bold text-rose-900 underline underline-offset-2" type="button" @click="loadIncidents">
+              Intentar de nuevo
+            </button>
+          </div>
+
+          <div v-else-if="isLoading && incidents.length === 0" class="rounded-2xl bg-slate-50 px-4 py-10 text-center text-sm text-slate-600" role="status">
+            Cargando incidencias…
+          </div>
+
+          <div v-else-if="incidents.length === 0" class="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-12 text-center">
+            <span class="mx-auto grid size-12 place-items-center rounded-2xl bg-white text-2xl text-blue-700 shadow-sm" aria-hidden="true">＋</span>
+            <h3 class="mt-4 font-bold text-slate-800">Todavía no hay reportes</h3>
+            <p class="mx-auto mt-2 max-w-xs text-sm leading-5 text-slate-600">Cuando se registre una incidencia, aparecerá aquí para su seguimiento.</p>
+          </div>
+
+          <div v-else class="space-y-3" aria-live="polite">
+            <article
+              v-for="incident in incidents"
+              :key="incident.id"
+              class="rounded-2xl border border-slate-200 p-4 transition hover:border-blue-200 hover:shadow-sm sm:p-5"
+            >
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div class="min-w-0">
+                  <p class="text-xs font-semibold text-slate-500">Reporte #{{ incident.id }}</p>
+                  <h3 class="mt-1 break-words text-lg font-bold text-slate-900">{{ incident.title }}</h3>
+                  <p class="mt-1 text-sm text-slate-600">
+                    {{ incident.location }} <span aria-hidden="true">·</span> {{ incident.category_name }}
+                  </p>
+                </div>
+              </div>
+              <p class="mt-3 whitespace-pre-line break-words text-sm leading-6 text-slate-700">{{ incident.description }}</p>
+              <div class="mt-4 flex flex-col gap-1 border-t border-slate-100 pt-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+                <span>Reportó {{ incident.reported_by_name }}</span>
+                <time :datetime="incident.created_at">{{ formatDate(incident.created_at) }}</time>
+              </div>
+            </article>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
 </template>
