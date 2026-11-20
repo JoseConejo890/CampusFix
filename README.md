@@ -1,6 +1,12 @@
 # CampusFix
 
-## Base de datos — Semana 1
+## Actualización de incidencias
+
+La API permite asignar técnicos, cambiar estados y consultar el historial.
+El contrato, los ejemplos y las pruebas están en
+[la guía de actualización de incidencias](docs/incident-updates.md).
+
+## Base de datos
 
 El modelo PostgreSQL, las relaciones, los comandos de instalación y la prueba
 del esquema se documentan en [la guía de base de datos](apps/api/db/README.md).

@@ -28,8 +28,8 @@ export function getPool() {
  * Executes a callback inside a PostgreSQL transaction, committing on success
  * and rolling back on any thrown error.
  */
-export async function withTransaction(callback) {
-  const client = await getPool().connect();
+export async function withTransaction(callback, databasePool = getPool()) {
+  const client = await databasePool.connect();
   try {
     await client.query('BEGIN');
     const result = await callback(client);
