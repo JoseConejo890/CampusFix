@@ -1,6 +1,6 @@
 import { getPool, withTransaction } from '../db.js';
 
-const INCIDENT_SELECT = `
+export const INCIDENT_SELECT = `
   SELECT
     i.id,
     i.title,

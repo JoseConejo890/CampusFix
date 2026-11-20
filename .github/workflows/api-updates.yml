@@ -1,0 +1,50 @@
+name: Incident updates integration
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - apps/api/**
+      - .github/workflows/api-updates.yml
+  push:
+    branches: [feature/api-updates]
+    paths:
+      - apps/api/**
+      - .github/workflows/api-updates.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: campusfix_test
+          POSTGRES_USER: campusfix
+          POSTGRES_PASSWORD: campusfix_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U campusfix -d campusfix_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/api/package-lock.json
+      - name: Install API dependencies
+        working-directory: apps/api
+        run: npm ci
+      - name: Run HTTP and PostgreSQL integration tests
+        working-directory: apps/api
+        env:
+          TEST_DATABASE_URL: postgresql://campusfix:campusfix_test@localhost:5432/campusfix_test
+        run: npm test

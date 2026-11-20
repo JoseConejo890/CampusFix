@@ -19,7 +19,6 @@ services:
       - api
 
   api:
-    # The API container is an environment placeholder until its app entrypoint is added.
     build:
       context: .
       dockerfile: docker/api.Dockerfile
@@ -27,6 +26,8 @@ services:
       NODE_ENV: development
       PORT: "3000"
       DATABASE_URL: postgresql://campusfix:campusfix_dev@db:5432/campusfix_dev
+      # Development identity; disabled by default.
+      DEV_AUTH_ENABLED: ${DEV_AUTH_ENABLED:-false}
     ports:
       - "4000:3000"
     depends_on:

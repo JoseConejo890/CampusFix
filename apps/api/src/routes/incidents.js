@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { createIncidentUpdatesRouter } from './incidentUpdates.js';
 
 const VALID_STATUSES = new Set(['open', 'in_progress', 'resolved', 'closed']);
 const VALID_PRIORITIES = new Set(['low', 'medium', 'high']);
@@ -79,7 +80,7 @@ function validateCreateIncidentBody(body) {
 /**
  * Builds the Express router for /api/incidents endpoints.
  */
-export function createIncidentsRouter(repository) {
+export function createIncidentsRouter(repository, options = {}) {
   const router = Router();
 
   router.get('/', async (req, res, next) => {
@@ -141,5 +142,6 @@ export function createIncidentsRouter(repository) {
     }
   });
 
+  router.use(createIncidentUpdatesRouter(repository, options));
   return router;
 }
