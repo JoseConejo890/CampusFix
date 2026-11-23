@@ -9,6 +9,8 @@ interface Incident {
   reported_by: string
   reported_by_name: string
   created_at: string
+  status: string
+  priority: string
 }
 
 interface ApiPayload {
@@ -28,6 +30,24 @@ const isSubmitting = ref(false)
 const loadError = ref('')
 const submitError = ref('')
 const successMessage = ref('')
+const statusFilter = ref('')
+const priorityFilter = ref('')
+const visibleIncidents = computed(() => incidents.value.filter(incident =>
+  (!statusFilter.value || incident.status === statusFilter.value)
+  && (!priorityFilter.value || incident.priority === priorityFilter.value),
+))
+
+const statusLabels: Record<string, string> = {
+  open: 'Abierta',
+  in_progress: 'En progreso',
+  resolved: 'Resuelta',
+  closed: 'Cerrada',
+}
+const priorityLabels: Record<string, string> = {
+  low: 'Baja',
+  medium: 'Media',
+  high: 'Alta',
+}
 
 const form = reactive({
   title: '',
@@ -287,6 +307,23 @@ onMounted(() => {
             </button>
           </div>
 
+          <div class="mb-5 grid gap-3 sm:grid-cols-2">
+            <div>
+              <label for="status-filter" class="mb-1 block text-sm font-semibold text-slate-700">Estado</label>
+              <select id="status-filter" v-model="statusFilter" class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm">
+                <option value="">Todos los estados</option>
+                <option v-for="(label, value) in statusLabels" :key="value" :value="value">{{ label }}</option>
+              </select>
+            </div>
+            <div>
+              <label for="priority-filter" class="mb-1 block text-sm font-semibold text-slate-700">Prioridad</label>
+              <select id="priority-filter" v-model="priorityFilter" class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm">
+                <option value="">Todas las prioridades</option>
+                <option v-for="(label, value) in priorityLabels" :key="value" :value="value">{{ label }}</option>
+              </select>
+            </div>
+          </div>
+
           <div v-if="loadError" class="rounded-2xl border border-rose-200 bg-rose-50 p-4" role="alert">
             <p class="text-sm text-rose-800">{{ loadError }}</p>
             <button class="mt-3 text-sm font-bold text-rose-900 underline underline-offset-2" type="button" @click="loadIncidents">
@@ -304,9 +341,14 @@ onMounted(() => {
             <p class="mx-auto mt-2 max-w-xs text-sm leading-5 text-slate-600">Cuando se registre una incidencia, aparecerá aquí para su seguimiento.</p>
           </div>
 
+          <div v-else-if="visibleIncidents.length === 0" class="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-600" role="status">
+            No hay incidencias que coincidan con los filtros seleccionados.
+            <button class="mt-2 block w-full font-bold text-blue-700 underline" type="button" @click="statusFilter = ''; priorityFilter = ''">Limpiar filtros</button>
+          </div>
+
           <div v-else class="space-y-3" aria-live="polite">
             <article
-              v-for="incident in incidents"
+              v-for="incident in visibleIncidents"
               :key="incident.id"
               class="rounded-2xl border border-slate-200 p-4 transition hover:border-blue-200 hover:shadow-sm sm:p-5"
             >
@@ -320,6 +362,8 @@ onMounted(() => {
                 </div>
               </div>
               <p class="mt-3 whitespace-pre-line break-words text-sm leading-6 text-slate-700">{{ incident.description }}</p>
+              <p class="mt-3 text-sm text-slate-600">Estado: {{ statusLabels[incident.status] || incident.status }} · Prioridad: {{ priorityLabels[incident.priority] || incident.priority }}</p>
+              <IncidentHistory :incident-id="incident.id" :api-base="apiBase" />
               <div class="mt-4 flex flex-col gap-1 border-t border-slate-100 pt-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
                 <span>Reportó {{ incident.reported_by_name }}</span>
                 <time :datetime="incident.created_at">{{ formatDate(incident.created_at) }}</time>
