@@ -13,9 +13,24 @@ interface Incident {
   priority: string
 }
 
+interface Category {
+  id: string
+  name: string
+  description: string | null
+}
+
+interface UserAccount {
+  id: string
+  name: string
+  email: string
+  role: 'student' | 'technician' | 'admin' | string
+}
+
 interface ApiPayload {
   incidents?: Incident[]
   incident?: Incident
+  categories?: Category[]
+  users?: UserAccount[]
   error?: string
   details?: string[]
 }
@@ -25,18 +40,28 @@ const apiBase = String(config.public.apiBase).replace(/\/+$/, '')
 const incidentsEndpoint = `${apiBase}/incidents`
 
 const incidents = ref<Incident[]>([])
+const categories = ref<Category[]>([])
+const users = ref<UserAccount[]>([])
+const activeUserId = ref('')
 const isLoading = ref(false)
 const isSubmitting = ref(false)
 const loadError = ref('')
+const catalogError = ref('')
 const submitError = ref('')
 const successMessage = ref('')
 const statusFilter = ref('')
 const priorityFilter = ref('')
+const activeUser = computed(() => users.value.find(user => user.id === activeUserId.value) ?? null)
 const visibleIncidents = computed(() => incidents.value.filter(incident =>
   (!statusFilter.value || incident.status === statusFilter.value)
   && (!priorityFilter.value || incident.priority === priorityFilter.value),
 ))
 
+const roleLabels: Record<string, string> = {
+  student: 'Estudiante',
+  technician: 'Técnico',
+  admin: 'Administrador',
+}
 const statusLabels: Record<string, string> = {
   open: 'Abierta',
   in_progress: 'En progreso',
@@ -54,7 +79,7 @@ const form = reactive({
   description: '',
   location: '',
   categoryId: '',
-  reportedBy: '',
+  priority: 'medium',
 })
 
 function getErrorMessage(payload: ApiPayload, fallback: string) {
@@ -100,6 +125,40 @@ async function loadIncidents() {
   }
 }
 
+async function loadCatalogs() {
+  catalogError.value = ''
+
+  try {
+    const [categoriesRes, usersRes] = await Promise.all([
+      fetch(`${apiBase}/categories`),
+      fetch(`${apiBase}/users`),
+    ])
+
+    const [categoriesPayload, usersPayload] = await Promise.all([
+      readPayload(categoriesRes),
+      readPayload(usersRes),
+    ])
+
+    if (!categoriesRes.ok || !usersRes.ok) {
+      throw new Error('No se pudieron cargar las categorías o usuarios.')
+    }
+
+    categories.value = Array.isArray(categoriesPayload.categories) ? categoriesPayload.categories : []
+    users.value = Array.isArray(usersPayload.users) ? usersPayload.users : []
+
+    if (!form.categoryId && categories.value.length > 0) {
+      form.categoryId = categories.value[0]?.id ?? ''
+    }
+    if (!activeUserId.value && users.value.length > 0) {
+      activeUserId.value = users.value[0]?.id ?? ''
+    }
+  } catch (error) {
+    catalogError.value = error instanceof Error && !/failed to fetch|networkerror/i.test(error.message)
+      ? error.message
+      : 'No se pudieron cargar las listas de categorías y roles desde la API.'
+  }
+}
+
 async function submitIncident() {
   if (isSubmitting.value) {
     return
@@ -107,6 +166,12 @@ async function submitIncident() {
 
   submitError.value = ''
   successMessage.value = ''
+
+  if (!activeUserId.value) {
+    submitError.value = 'Selecciona un usuario/rol en la barra superior antes de registrar.'
+    return
+  }
+
   isSubmitting.value = true
 
   try {
@@ -120,7 +185,8 @@ async function submitIncident() {
         description: form.description.trim(),
         location: form.location.trim(),
         categoryId: form.categoryId.trim(),
-        reportedBy: form.reportedBy.trim(),
+        reportedBy: activeUserId.value,
+        priority: form.priority,
       }),
     })
     const payload = await readPayload(response)
@@ -142,8 +208,8 @@ async function submitIncident() {
       title: '',
       description: '',
       location: '',
-      categoryId: '',
-      reportedBy: '',
+      categoryId: categories.value[0]?.id ?? '',
+      priority: 'medium',
     })
   } catch (error) {
     submitError.value = error instanceof Error
@@ -167,13 +233,47 @@ function formatDate(value: string) {
 }
 
 onMounted(() => {
-  void loadIncidents()
+  void Promise.all([loadCatalogs(), loadIncidents()])
 })
 </script>
 
 <template>
   <div class="min-h-screen bg-slate-50 text-slate-900">
     <main id="inicio" class="mx-auto max-w-7xl px-5 py-8 sm:px-8 sm:py-10">
+      <section
+        aria-label="Selector rápido de rol"
+        class="mb-5 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:px-6"
+      >
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-800">Modo pruebas</span>
+          <p class="text-sm font-semibold text-slate-700">Usuario y rol activo:</p>
+          <span
+            v-if="activeUser"
+            class="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700"
+          >
+            {{ roleLabels[activeUser.role] || activeUser.role }} · ID #{{ activeUser.id }}
+          </span>
+        </div>
+        <div class="flex items-center gap-2">
+          <label for="active-role-select" class="sr-only">Cambiar usuario o rol activo</label>
+          <select
+            id="active-role-select"
+            v-model="activeUserId"
+            class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100 sm:w-72"
+            :disabled="users.length === 0"
+          >
+            <option v-if="users.length === 0" value="">Sin usuarios disponibles</option>
+            <option v-for="user in users" :key="user.id" :value="user.id">
+              {{ user.name }} ({{ roleLabels[user.role] || user.role }} · #{{ user.id }})
+            </option>
+          </select>
+        </div>
+      </section>
+
+      <p v-if="catalogError" class="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="alert">
+        {{ catalogError }}
+      </p>
+
       <section class="mb-8 rounded-3xl bg-blue-700 px-6 py-8 text-white shadow-lg shadow-blue-900/10 sm:px-9 sm:py-10">
         <p class="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-blue-100">Servicios universitarios</p>
         <div class="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
@@ -243,33 +343,42 @@ onMounted(() => {
 
             <div class="grid gap-4 sm:grid-cols-2">
               <div>
-                <label for="category-id" class="mb-1.5 block text-sm font-semibold text-slate-700">ID de categoría</label>
-                <input
+                <label for="category-id" class="mb-1.5 block text-sm font-semibold text-slate-700">Categoría</label>
+                <select
                   id="category-id"
                   v-model="form.categoryId"
-                  class="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                  class="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
                   name="categoryId"
-                  type="text"
-                  inputmode="numeric"
-                  pattern="[1-9][0-9]*"
-                  placeholder="Ej. 1"
                   required
                 >
+                  <option value="" disabled>Selecciona una categoría</option>
+                  <option v-for="category in categories" :key="category.id" :value="category.id">
+                    {{ category.name }} (#{{ category.id }})
+                  </option>
+                </select>
               </div>
               <div>
-                <label for="reporter-id" class="mb-1.5 block text-sm font-semibold text-slate-700">ID de quien reporta</label>
-                <input
-                  id="reporter-id"
-                  v-model="form.reportedBy"
-                  class="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
-                  name="reportedBy"
-                  type="text"
-                  inputmode="numeric"
-                  pattern="[1-9][0-9]*"
-                  placeholder="Ej. 1"
+                <label for="incident-priority" class="mb-1.5 block text-sm font-semibold text-slate-700">Prioridad</label>
+                <select
+                  id="incident-priority"
+                  v-model="form.priority"
+                  class="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                  name="priority"
                   required
                 >
+                  <option v-for="(label, value) in priorityLabels" :key="value" :value="value">
+                    {{ label }}
+                  </option>
+                </select>
               </div>
+            </div>
+
+            <div class="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-700">
+              <span class="font-semibold">Reporta:</span>
+              <span v-if="activeUser" class="ml-1">
+                {{ activeUser.name }} ({{ roleLabels[activeUser.role] || activeUser.role }} · ID #{{ activeUser.id }})
+              </span>
+              <span v-else class="ml-1 text-slate-500">Selecciona un usuario en la barra superior</span>
             </div>
 
             <p v-if="submitError" class="rounded-xl bg-rose-50 px-3.5 py-3 text-sm text-rose-800" role="alert">
@@ -363,7 +472,7 @@ onMounted(() => {
               </div>
               <p class="mt-3 whitespace-pre-line break-words text-sm leading-6 text-slate-700">{{ incident.description }}</p>
               <p class="mt-3 text-sm text-slate-600">Estado: {{ statusLabels[incident.status] || incident.status }} · Prioridad: {{ priorityLabels[incident.priority] || incident.priority }}</p>
-              <IncidentHistory :incident-id="incident.id" :api-base="apiBase" />
+              <IncidentHistory :incident-id="incident.id" :api-base="apiBase" :active-user-id="activeUserId" />
               <div class="mt-4 flex flex-col gap-1 border-t border-slate-100 pt-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
                 <span>Reportó {{ incident.reported_by_name }}</span>
                 <time :datetime="incident.created_at">{{ formatDate(incident.created_at) }}</time>

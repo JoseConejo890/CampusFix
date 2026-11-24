@@ -12,7 +12,7 @@ interface HistoryEntry {
   created_at: string
 }
 
-const props = defineProps<{ incidentId: string, apiBase: string }>()
+const props = defineProps<{ incidentId: string, apiBase: string, activeUserId?: string }>()
 const expanded = ref(false)
 const loading = ref(false)
 const error = ref('')
@@ -34,8 +34,9 @@ async function loadHistory() {
   updates.value = []
   try {
     const headers: Record<string, string> = {}
-    if (isDevelopment && developmentUserId.value.trim()) {
-      headers['X-User-Id'] = developmentUserId.value.trim()
+    const effectiveUserId = developmentUserId.value.trim() || props.activeUserId?.trim() || ''
+    if (isDevelopment && effectiveUserId) {
+      headers['X-User-Id'] = effectiveUserId
     }
     const response = await fetch(`${props.apiBase}/incidents/${encodeURIComponent(props.incidentId)}/history`, {
       headers,
