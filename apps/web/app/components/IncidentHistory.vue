@@ -35,7 +35,7 @@ async function loadHistory() {
   try {
     const headers: Record<string, string> = {}
     const effectiveUserId = developmentUserId.value.trim() || props.activeUserId?.trim() || ''
-    if (isDevelopment && effectiveUserId) {
+    if (effectiveUserId) {
       headers['X-User-Id'] = effectiveUserId
     }
     const response = await fetch(`${props.apiBase}/incidents/${encodeURIComponent(props.incidentId)}/history`, {
