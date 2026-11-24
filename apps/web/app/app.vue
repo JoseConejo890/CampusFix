@@ -8,6 +8,8 @@ interface Incident {
   category_name: string
   reported_by: string
   reported_by_name: string
+  assigned_to?: string | null
+  assigned_to_name?: string | null
   created_at: string
   status: string
   priority: string
@@ -52,15 +54,45 @@ const successMessage = ref('')
 const statusFilter = ref('')
 const priorityFilter = ref('')
 const activeUser = computed(() => users.value.find(user => user.id === activeUserId.value) ?? null)
+const technicians = computed(() => users.value.filter(user => user.role === 'technician'))
 const visibleIncidents = computed(() => incidents.value.filter(incident =>
   (!statusFilter.value || incident.status === statusFilter.value)
   && (!priorityFilter.value || incident.priority === priorityFilter.value),
 ))
 
+interface IncidentDraft {
+  status: string
+  assignedTo: string
+  comment: string
+  saving: boolean
+  error: string
+  success: string
+}
+
+const incidentDrafts = reactive<Record<string, IncidentDraft>>({})
+
+function syncIncidentDrafts(list: Incident[]) {
+  for (const incident of list) {
+    incidentDrafts[incident.id] = {
+      status: incident.status,
+      assignedTo: incident.assigned_to ?? '',
+      comment: '',
+      saving: false,
+      error: '',
+      success: '',
+    }
+  }
+}
+
 const roleLabels: Record<string, string> = {
   student: 'Estudiante',
   technician: 'Técnico',
   admin: 'Administrador',
+}
+const rolePermissionsText: Record<string, string> = {
+  student: 'Puede registrar y consultar incidencias. No puede asignar técnicos ni cambiar estados.',
+  technician: 'Puede cambiar el estado de las incidencias asignadas a él. No puede asignar técnicos.',
+  admin: 'Puede asignar técnicos responsables y cambiar cualquier estado (respetando no cerrar sin técnico).',
 }
 const statusLabels: Record<string, string> = {
   open: 'Abierta',
@@ -115,6 +147,7 @@ async function loadIncidents() {
     }
 
     incidents.value = Array.isArray(payload.incidents) ? payload.incidents : []
+    syncIncidentDrafts(incidents.value)
   } catch (error) {
     const message = error instanceof Error ? error.message : ''
     loadError.value = message && !/failed to fetch|networkerror/i.test(message)
@@ -203,6 +236,7 @@ async function submitIncident() {
       payload.incident,
       ...incidents.value.filter(incident => incident.id !== payload.incident?.id),
     ]
+    syncIncidentDrafts([payload.incident])
     successMessage.value = `La incidencia #${payload.incident.id} se registró correctamente.`
     Object.assign(form, {
       title: '',
@@ -217,6 +251,92 @@ async function submitIncident() {
       : 'Ocurrió un error al registrar la incidencia.'
   } finally {
     isSubmitting.value = false
+  }
+}
+
+function canAssignTechnician() {
+  return activeUser.value?.role === 'admin'
+}
+
+function canChangeStatus(incident: Incident) {
+  if (!activeUser.value) {
+    return false
+  }
+  if (activeUser.value.role === 'admin') {
+    return true
+  }
+  if (activeUser.value.role === 'technician') {
+    return incident.assigned_to === activeUser.value.id
+  }
+  return false
+}
+
+async function updateIncident(incident: Incident) {
+  const draft = incidentDrafts[incident.id]
+  if (!draft || draft.saving || !activeUserId.value) {
+    return
+  }
+
+  draft.error = ''
+  draft.success = ''
+
+  const effectiveAssignee = canAssignTechnician()
+    ? (draft.assignedTo || null)
+    : (incident.assigned_to ?? null)
+
+  if (draft.status === 'closed' && !effectiveAssignee) {
+    draft.error = 'No se puede cerrar una incidencia sin un técnico responsable asignado.'
+    return
+  }
+
+  const body: Record<string, string | null> = {
+    status: draft.status,
+  }
+  if (canAssignTechnician()) {
+    body.assignedTo = draft.assignedTo || null
+  }
+  if (draft.comment.trim()) {
+    body.comment = draft.comment.trim()
+  }
+
+  draft.saving = true
+
+  try {
+    const response = await fetch(`${incidentsEndpoint}/${encodeURIComponent(incident.id)}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-User-Id': activeUserId.value,
+      },
+      body: JSON.stringify(body),
+    })
+    const payload = await readPayload(response)
+
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(payload.error || 'No tienes permiso o falta activar DEV_AUTH_ENABLED=true en la API.')
+    }
+    if (!response.ok) {
+      throw new Error(getErrorMessage(payload, 'No se pudo actualizar la incidencia.'))
+    }
+
+    if (payload.incident) {
+      incidents.value = incidents.value.map(item =>
+        item.id === payload.incident?.id ? payload.incident : item,
+      )
+      syncIncidentDrafts([payload.incident])
+      const updatedDraft = incidentDrafts[incident.id]
+      if (updatedDraft) {
+        updatedDraft.success = 'Incidencia actualizada.'
+      }
+    } else {
+      await loadIncidents()
+    }
+  } catch (error) {
+    draft.error = error instanceof Error
+      ? error.message
+      : 'Ocurrió un error al actualizar la incidencia.'
+  } finally {
+    draft.saving = false
   }
 }
 
@@ -242,32 +362,38 @@ onMounted(() => {
     <main id="inicio" class="mx-auto max-w-7xl px-5 py-8 sm:px-8 sm:py-10">
       <section
         aria-label="Selector rápido de rol"
-        class="mb-5 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:px-6"
+        class="mb-5 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:px-6"
       >
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-800">Modo pruebas</span>
-          <p class="text-sm font-semibold text-slate-700">Usuario y rol activo:</p>
-          <span
-            v-if="activeUser"
-            class="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700"
-          >
-            {{ roleLabels[activeUser.role] || activeUser.role }} · ID #{{ activeUser.id }}
-          </span>
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-800">Modo pruebas</span>
+            <p class="text-sm font-semibold text-slate-700">Usuario y rol activo:</p>
+            <span
+              v-if="activeUser"
+              class="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700"
+            >
+              {{ roleLabels[activeUser.role] || activeUser.role }} · ID #{{ activeUser.id }}
+            </span>
+          </div>
+          <div class="flex items-center gap-2">
+            <label for="active-role-select" class="sr-only">Cambiar usuario o rol activo</label>
+            <select
+              id="active-role-select"
+              v-model="activeUserId"
+              class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100 sm:w-72"
+              :disabled="users.length === 0"
+            >
+              <option v-if="users.length === 0" value="">Sin usuarios disponibles</option>
+              <option v-for="user in users" :key="user.id" :value="user.id">
+                {{ user.name }} ({{ roleLabels[user.role] || user.role }} · #{{ user.id }})
+              </option>
+            </select>
+          </div>
         </div>
-        <div class="flex items-center gap-2">
-          <label for="active-role-select" class="sr-only">Cambiar usuario o rol activo</label>
-          <select
-            id="active-role-select"
-            v-model="activeUserId"
-            class="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100 sm:w-72"
-            :disabled="users.length === 0"
-          >
-            <option v-if="users.length === 0" value="">Sin usuarios disponibles</option>
-            <option v-for="user in users" :key="user.id" :value="user.id">
-              {{ user.name }} ({{ roleLabels[user.role] || user.role }} · #{{ user.id }})
-            </option>
-          </select>
-        </div>
+        <p v-if="activeUser" class="text-xs text-slate-600">
+          <span class="font-semibold text-slate-700">Permisos del rol:</span>
+          {{ rolePermissionsText[activeUser.role] || 'Rol estándar.' }}
+        </p>
       </section>
 
       <p v-if="catalogError" class="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="alert">
@@ -471,7 +597,73 @@ onMounted(() => {
                 </div>
               </div>
               <p class="mt-3 whitespace-pre-line break-words text-sm leading-6 text-slate-700">{{ incident.description }}</p>
-              <p class="mt-3 text-sm text-slate-600">Estado: {{ statusLabels[incident.status] || incident.status }} · Prioridad: {{ priorityLabels[incident.priority] || incident.priority }}</p>
+              <p class="mt-3 text-sm text-slate-600">
+                Estado: {{ statusLabels[incident.status] || incident.status }}
+                · Prioridad: {{ priorityLabels[incident.priority] || incident.priority }}
+                · Técnico: {{ incident.assigned_to_name || 'Sin asignar' }}
+              </p>
+
+              <div
+                v-if="incidentDrafts[incident.id] && (canAssignTechnician() || canChangeStatus(incident))"
+                class="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3.5"
+              >
+                <p class="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-600">
+                  Gestión ({{ roleLabels[activeUser?.role || ''] || activeUser?.role }})
+                </p>
+                <div class="grid gap-2.5 sm:grid-cols-2">
+                  <div v-if="canAssignTechnician()">
+                    <label :for="`assign-${incident.id}`" class="mb-1 block text-xs font-semibold text-slate-700">Asignar técnico</label>
+                    <select
+                      :id="`assign-${incident.id}`"
+                      v-model="incidentDrafts[incident.id]!.assignedTo"
+                      class="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800"
+                    >
+                      <option value="">Sin asignar</option>
+                      <option v-for="tech in technicians" :key="tech.id" :value="tech.id">
+                        {{ tech.name }} (#{{ tech.id }})
+                      </option>
+                    </select>
+                  </div>
+                  <div v-if="canChangeStatus(incident)">
+                    <label :for="`status-${incident.id}`" class="mb-1 block text-xs font-semibold text-slate-700">Estado</label>
+                    <select
+                      :id="`status-${incident.id}`"
+                      v-model="incidentDrafts[incident.id]!.status"
+                      class="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800"
+                    >
+                      <option v-for="(label, value) in statusLabels" :key="value" :value="value">
+                        {{ label }}
+                      </option>
+                    </select>
+                  </div>
+                </div>
+                <div class="mt-2.5 flex flex-col gap-2 sm:flex-row">
+                  <input
+                    v-model="incidentDrafts[incident.id]!.comment"
+                    class="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800"
+                    type="text"
+                    placeholder="Comentario opcional del cambio"
+                  >
+                  <button
+                    class="shrink-0 rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-800 disabled:opacity-50"
+                    type="button"
+                    :disabled="incidentDrafts[incident.id]!.saving"
+                    @click="updateIncident(incident)"
+                  >
+                    {{ incidentDrafts[incident.id]!.saving ? 'Guardando…' : 'Guardar cambio' }}
+                  </button>
+                </div>
+                <p v-if="incidentDrafts[incident.id]!.error" class="mt-2 text-xs font-medium text-rose-700" role="alert">
+                  {{ incidentDrafts[incident.id]!.error }}
+                </p>
+                <p v-if="incidentDrafts[incident.id]!.success" class="mt-2 text-xs font-medium text-emerald-700" role="status">
+                  {{ incidentDrafts[incident.id]!.success }}
+                </p>
+              </div>
+              <p v-else-if="activeUser?.role === 'technician'" class="mt-3 text-xs text-slate-500">
+                Solo puedes cambiar el estado si esta incidencia está asignada a ti.
+              </p>
+
               <IncidentHistory :incident-id="incident.id" :api-base="apiBase" :active-user-id="activeUserId" />
               <div class="mt-4 flex flex-col gap-1 border-t border-slate-100 pt-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
                 <span>Reportó {{ incident.reported_by_name }}</span>
