@@ -1,8 +1,10 @@
 import express from 'express';
 import { defaultCatalogRepository } from './repositories/catalogRepository.js';
 import { defaultIncidentsRepository } from './repositories/incidentsRepository.js';
+import { defaultSummaryRepository } from './repositories/summaryRepository.js';
 import { createCatalogRouter } from './routes/catalog.js';
 import { createIncidentsRouter } from './routes/incidents.js';
+import { createSummaryRouter } from './routes/summary.js';
 import { defaultIncidentUpdatesRepository } from './repositories/incidentUpdatesRepository.js';
 
 /**
@@ -11,6 +13,7 @@ import { defaultIncidentUpdatesRepository } from './repositories/incidentUpdates
 export function createApp({
   incidentsRepository = { ...defaultIncidentsRepository, ...defaultIncidentUpdatesRepository },
   catalogRepository = defaultCatalogRepository,
+  summaryRepository = defaultSummaryRepository,
   resolveActorId,
 } = {}) {
   const app = express();
@@ -34,6 +37,7 @@ export function createApp({
   });
 
   app.use('/api', createCatalogRouter(catalogRepository));
+  app.use('/api/summary', createSummaryRouter(summaryRepository));
   app.use('/api/incidents', createIncidentsRouter(incidentsRepository, { resolveActorId }));
 
   app.use((err, _req, res, _next) => {
