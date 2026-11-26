@@ -9,7 +9,7 @@ interface ApiPayload {
   details?: string[]
 }
 
-export function useIncidents(onIncidentSaved?: () => void) {
+export function useIncidents() {
   const config = useRuntimeConfig()
   const apiBase = String(config.public.apiBase).replace(/\/+$/, '')
   const incidentsEndpoint = `${apiBase}/incidents`
@@ -187,7 +187,6 @@ export function useIncidents(onIncidentSaved?: () => void) {
         categoryId: categories.value[0]?.id ?? '',
         priority: 'medium',
       })
-      onIncidentSaved?.()
     } catch (error) {
       submitError.value = error instanceof Error
         ? error.message
@@ -275,7 +274,6 @@ export function useIncidents(onIncidentSaved?: () => void) {
       } else {
         await loadIncidents()
       }
-      onIncidentSaved?.()
     } catch (error) {
       draft.error = error instanceof Error
         ? error.message

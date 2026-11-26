@@ -7,11 +7,7 @@ const {
   statusFilter, priorityFilter, visibleIncidents, incidentDrafts, form,
   loadIncidents, submitIncident, canAssignTechnician, canChangeStatus, updateIncident,
   editIncidentDraft,
-} = useIncidents(() => { void refreshSummary() })
-
-onMounted(() => {
-  void refreshSummary()
-})
+} = useIncidents()
 </script>
 
 <template>
