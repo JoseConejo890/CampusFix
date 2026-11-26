@@ -15,7 +15,7 @@ const emit = defineEmits<{ refresh: [] }>()
     <dl class="grid grid-cols-2 gap-2.5" aria-live="polite">
       <div class="rounded-xl bg-blue-900/25 px-3 py-2">
         <dt class="text-sm font-medium text-blue-50">Abiertas</dt>
-        <dd class="text-2xl font-bold tabular-nums">{{ summary?.open ?? '—' }}</dd>
+        <dd class="text-2xl font-bold tabular-nums">{{ summary ? summary.total - summary.closed : '—' }}</dd>
       </div>
       <div class="rounded-xl bg-blue-900/25 px-3 py-2">
         <dt class="text-sm font-medium text-blue-50">Cerradas</dt>

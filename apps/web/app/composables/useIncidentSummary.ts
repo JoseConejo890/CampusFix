@@ -2,7 +2,6 @@ import type { Incident } from '~/types/incidents'
 
 export interface IncidentSummary {
   total: number
-  open: number
   closed: number
 }
 
@@ -21,8 +20,8 @@ export function useIncidentSummary() {
       const payload = await $fetch<{ summary?: IncidentSummary }>(`${apiBase}/summary`, options)
       const counts = payload?.summary
 
-      if (counts && [counts.total, counts.open, counts.closed].every(count => Number.isSafeInteger(count) && count >= 0)
-        && counts.open + counts.closed <= counts.total) {
+      if (counts && [counts.total, counts.closed].every(count => Number.isSafeInteger(count) && count >= 0)
+        && counts.closed <= counts.total) {
         return counts
       }
     } catch (error) {
@@ -36,15 +35,10 @@ export function useIncidentSummary() {
       throw new Error('El listado de incidencias no es válido.')
     }
 
-    const counts: IncidentSummary = { total: payload.incidents.length, open: 0, closed: 0 }
-    for (const incident of payload.incidents) {
-      if (incident.status === 'open') {
-        counts.open++
-      } else if (incident.status === 'closed') {
-        counts.closed++
-      }
+    return {
+      total: payload.incidents.length,
+      closed: payload.incidents.filter(incident => incident.status === 'closed').length,
     }
-    return counts
   }
 
   async function refreshSummary() {
