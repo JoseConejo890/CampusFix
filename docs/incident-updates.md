@@ -224,15 +224,14 @@ cliente.
 
 ### Fechas y cierre
 
-Cada cambio efectivo actualiza `updated_at`. Al cerrar, establece `closed_at` si
-todavía no existe; al reabrir, lo limpia. El historial usa `clock_timestamp()`
-para registrar el momento real de escritura, incluso si la transacción tuvo
-que esperar un bloqueo.
+Cada cambio efectivo usa un solo instante de PostgreSQL para `updated_at`
+y el historial. Al cerrar, usa ese mismo instante para `closed_at`.
+Las reasignaciones conservan la fecha de cierre y al reabrir se limpia.
 
 El endpoint rechaza cerrar sin responsable y quitar al responsable de una
 incidencia que continúa cerrada. Se puede reabrir y quitar al responsable en la
-misma solicitud. Esta validación protege el endpoint; no hay un trigger o CHECK
-adicional que imponga la regla a escrituras SQL directas.
+misma solicitud. La migración 002 también comprueba en PostgreSQL que las
+incidencias cerradas tengan responsable y que `closed_at` corresponda al estado.
 
 ## Ejecución y pruebas
 
@@ -319,10 +318,9 @@ Desde `apps/api`, sin conexión de prueba configurada:
 npm test
 ```
 
-Se ejecutan las 8 pruebas HTTP existentes; las 10 de integración se omiten
-explícitamente si no existe `TEST_DATABASE_URL`.
+Las pruebas de integración se omiten si no existe `TEST_DATABASE_URL`.
 
-Para ejecutar las 18 con PostgreSQL local iniciado:
+Para ejecutar la suite completa con PostgreSQL local iniciado:
 
 ```powershell
 $env:TEST_DATABASE_URL = 'postgresql://campusfix:campusfix_dev@127.0.0.1:5432/campusfix_dev'
@@ -330,7 +328,7 @@ npm test
 ```
 
 Las pruebas de integración crean un esquema temporal con nombre aleatorio,
-aplican allí la migración inicial y generan sus propios usuarios e incidencias.
+aplican allí las migraciones y generan sus propios usuarios e incidencias.
 Al terminar eliminan solo ese esquema temporal. No truncan ni actualizan las
 tablas de la aplicación. El usuario de pruebas necesita permiso para crear
 esquemas. Si el proceso se interrumpe de forma forzada, puede quedar un esquema
@@ -531,22 +529,25 @@ export function createIncidentUpdatesRepository({ transaction = withTransaction 
           return { incident: rows[0], update: null };
         }
 
-        await client.query(`
+        const { rows: [saved] } = await client.query(`
+          WITH change_time AS (SELECT clock_timestamp() AS value)
           UPDATE incidents
-          SET status = $2, assigned_to = $3, updated_at = clock_timestamp(),
+          SET status = $2, assigned_to = $3, updated_at = change_time.value,
               closed_at = CASE WHEN $2 = 'closed'
-                THEN COALESCE(closed_at, clock_timestamp()) ELSE NULL END
+                THEN COALESCE(closed_at, change_time.value) ELSE NULL END
+          FROM change_time
           WHERE id = $1
+          RETURNING updated_at::text AS changed_at
         `, [incidentId, nextStatus, nextAssignee]);
 
         const { rows: updates } = await client.query(`
           INSERT INTO incident_updates
             (incident_id, changed_by, previous_status, new_status,
              previous_assigned_to, new_assigned_to, comment, created_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, clock_timestamp())
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
           RETURNING *
         `, [incidentId, actor.id, previous.status, nextStatus,
-          previous.assigned_to, nextAssignee, changes.comment ?? null]);
+          previous.assigned_to, nextAssignee, changes.comment ?? null, saved.changed_at]);
 
         const { rows } = await client.query(`${INCIDENT_SELECT} WHERE i.id = $1`, [incidentId]);
         return { incident: rows[0], update: updates[0] };
@@ -1056,8 +1057,9 @@ before(async () => {
   adminPool = new pg.Pool({ connectionString });
   await adminPool.query(`CREATE SCHEMA "${schema}"`);
   pool = new pg.Pool({ connectionString, options: `-c search_path=${schema}` });
-  const migration = await readFile(new URL('../db/migrations/001_initial_schema.sql', import.meta.url), 'utf8');
-  await pool.query(migration);
+  for (const file of ['001_schema.sql', '002_closure.sql']) {
+    await pool.query(await readFile(new URL(`../db/migrations/${file}`, import.meta.url), 'utf8'));
+  }
   repository = createIncidentUpdatesRepository({ transaction: (callback) => withTransaction(callback, pool) });
 });
 
@@ -1166,10 +1168,31 @@ integration('closing requires an assignee and closing/reopening maintains dates'
   const closed = await update(f, { assignedTo: f.tech, status: 'closed' });
   assert.ok(closed.incident.closed_at instanceof Date);
   assert.ok(closed.incident.updated_at >= closed.incident.created_at);
+  const { rows: [timestamps] } = await pool.query(`
+    SELECT i.closed_at = i.updated_at AND i.updated_at = u.created_at AS match
+    FROM incidents i JOIN incident_updates u ON u.incident_id = i.id
+    WHERE u.id = $1
+  `, [closed.update.id]);
+  assert.equal(timestamps.match, true);
   await assert.rejects(update(f, { assignedTo: null }), { status: 409 });
+  const reassigned = await update(f, { assignedTo: f.otherTech });
+  assert.deepEqual(reassigned.incident.closed_at, closed.incident.closed_at);
   const reopened = await update(f, { status: 'open' });
   assert.equal(reopened.incident.closed_at, null);
   assert.equal(reopened.update.previous_status, 'closed');
+});
+
+integration('PostgreSQL rejects inconsistent closures even outside the API', async () => {
+  const f = await fixture();
+  await assert.rejects(pool.query(
+    "UPDATE incidents SET status = 'closed', closed_at = now() WHERE id = $1", [f.incident],
+  ), { code: '23514', constraint: 'incidents_closed_requires_assignee' });
+  await assert.rejects(pool.query(
+    "UPDATE incidents SET status = 'closed', assigned_to = $2 WHERE id = $1", [f.incident, f.tech],
+  ), { code: '23514', constraint: 'incidents_closed_at_matches_status' });
+  await assert.rejects(pool.query(
+    'UPDATE incidents SET closed_at = now() WHERE id = $1', [f.incident],
+  ), { code: '23514', constraint: 'incidents_closed_at_matches_status' });
 });
 
 integration('history exposes author and assignee names in chronological order without password hashes', async () => {
