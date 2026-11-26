@@ -51,22 +51,25 @@ export function createIncidentUpdatesRepository({ transaction = withTransaction 
           return { incident: rows[0], update: null };
         }
 
-        await client.query(`
+        const { rows: [saved] } = await client.query(`
+          WITH change_time AS (SELECT clock_timestamp() AS value)
           UPDATE incidents
-          SET status = $2, assigned_to = $3, updated_at = clock_timestamp(),
+          SET status = $2, assigned_to = $3, updated_at = change_time.value,
               closed_at = CASE WHEN $2 = 'closed'
-                THEN COALESCE(closed_at, clock_timestamp()) ELSE NULL END
+                THEN COALESCE(closed_at, change_time.value) ELSE NULL END
+          FROM change_time
           WHERE id = $1
+          RETURNING updated_at::text AS changed_at
         `, [incidentId, nextStatus, nextAssignee]);
 
         const { rows: updates } = await client.query(`
           INSERT INTO incident_updates
             (incident_id, changed_by, previous_status, new_status,
              previous_assigned_to, new_assigned_to, comment, created_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, clock_timestamp())
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
           RETURNING *
         `, [incidentId, actor.id, previous.status, nextStatus,
-          previous.assigned_to, nextAssignee, changes.comment ?? null]);
+          previous.assigned_to, nextAssignee, changes.comment ?? null, saved.changed_at]);
 
         const { rows } = await client.query(`${INCIDENT_SELECT} WHERE i.id = $1`, [incidentId]);
         return { incident: rows[0], update: updates[0] };

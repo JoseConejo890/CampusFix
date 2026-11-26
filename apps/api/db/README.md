@@ -53,8 +53,9 @@ docker compose exec -T db psql -U campusfix -d campusfix_dev -c '\dt'
 Get-Content -Raw apps/api/db/tests/schema.sql | docker compose exec -T db psql -v ON_ERROR_STOP=1 -U campusfix -d campusfix_dev
 ```
 
-En una base nueva, el contenedor aplica automáticamente la
-[migración inicial](./migrations/001_initial_schema.sql). Solo se levanta el
+En una base nueva, el contenedor aplica automáticamente las migraciones
+[001](./migrations/001_schema.sql) y
+[002](./migrations/002_closure.sql) en orden. Solo se levanta el
 servicio `db`, así se puede probar sin esperar a que exista el backend.
 Esperar a que el servicio esté saludable antes de ejecutar las consultas
 (`docker compose ps db`). La prueba debe mostrar `Schema checks passed` y
@@ -72,30 +73,31 @@ el esquema o Compose, y al subir cambios de BD a `feature/db-schema`.
 Si `\dt` confirma que todavía no están las tablas, aplicar una sola vez:
 
 ```powershell
-Get-Content -Raw apps/api/db/migrations/001_initial_schema.sql | docker compose exec -T db psql -v ON_ERROR_STOP=1 -U campusfix -d campusfix_dev
+Get-Content -Raw apps/api/db/migrations/001_schema.sql | docker compose exec -T db psql -v ON_ERROR_STOP=1 -U campusfix -d campusfix_dev
 ```
 
-La migración es transaccional y deliberadamente no usa `IF NOT EXISTS`: si ya
-existe un esquema, falla para evitar ocultar diferencias. No borrar el volumen
-para aplicar cambios. Los siguientes cambios deben ser migraciones numeradas
-que se apliquen explícitamente. Para Render, aplicar el mismo archivo una vez
-mediante `psql -v ON_ERROR_STOP=1` usando la conexión privada correspondiente;
-las credenciales se configuran fuera del repositorio.
+Para una base existente que ya tiene el esquema inicial, aplicar la migración
+002 una vez, sin borrar el volumen:
 
-## Integración pendiente de semanas 2 y 3
+```powershell
+Get-Content -Raw apps/api/db/migrations/002_closure.sql | docker compose exec -T db psql -v ON_ERROR_STOP=1 -U campusfix -d campusfix_dev
+```
 
-El esquema almacena los datos necesarios, pero las siguientes reglas todavía
-deben implementarse en el backend, según el plan:
+Para Render, aplicar las migraciones pendientes en orden con
+`psql -v ON_ERROR_STOP=1` y la conexión privada correspondiente.
 
-- Verificar la identidad autenticada y permitir solo al administrador asignar
-  responsables; comprobar que el responsable tenga rol `technician`.
-- Actualizar la incidencia e insertar el historial en la misma transacción,
-  tomando el usuario del contexto autenticado. Registrar también el estado
-  inicial (`previous_status = NULL`) al crear un reporte. Una reasignación sin
-  cambio de estado guarda el mismo estado en ambos campos.
-- Mantener `updated_at`, establecer `closed_at` al cerrar y limpiarlo al reabrir.
-- Rechazar el cierre sin responsable asignado. Esta regla de la semana 3 aún
-  no está impuesta por una restricción en esta migración.
+## Reglas de incidencias
+
+PostgreSQL exige un responsable y una fecha de cierre para incidencias cerradas.
+Los demás estados deben tener `closed_at` en nulo. La API comprueba el rol al
+asignar y registra el cambio y su historial en una transacción. Al cerrar, usa
+la misma fecha para la actualización, el cierre y el historial. Al reasignar
+mantiene la fecha de cierre y al reabrir la limpia.
+
+La migración 002 completa fechas faltantes con el último cierre del historial
+o, si no existe, con `updated_at`. Limpia las fechas de cierre de los demás
+estados. Si encuentra incidencias cerradas sin responsable, cancela la
+migración. Revisarlas y asignar un técnico o reabrirlas antes de reintentar.
 
 No hay triggers que generen historial ni actualicen fechas automáticamente.
 Los datos de demostración (seeds) corresponden a Alex en la semana 3; la prueba

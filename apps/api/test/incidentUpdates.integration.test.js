@@ -20,8 +20,9 @@ before(async () => {
   adminPool = new pg.Pool({ connectionString });
   await adminPool.query(`CREATE SCHEMA "${schema}"`);
   pool = new pg.Pool({ connectionString, options: `-c search_path=${schema}` });
-  const migration = await readFile(new URL('../db/migrations/001_initial_schema.sql', import.meta.url), 'utf8');
-  await pool.query(migration);
+  for (const file of ['001_schema.sql', '002_closure.sql']) {
+    await pool.query(await readFile(new URL(`../db/migrations/${file}`, import.meta.url), 'utf8'));
+  }
   repository = createIncidentUpdatesRepository({ transaction: (callback) => withTransaction(callback, pool) });
 });
 
@@ -130,10 +131,31 @@ integration('closing requires an assignee and closing/reopening maintains dates'
   const closed = await update(f, { assignedTo: f.tech, status: 'closed' });
   assert.ok(closed.incident.closed_at instanceof Date);
   assert.ok(closed.incident.updated_at >= closed.incident.created_at);
+  const { rows: [timestamps] } = await pool.query(`
+    SELECT i.closed_at = i.updated_at AND i.updated_at = u.created_at AS match
+    FROM incidents i JOIN incident_updates u ON u.incident_id = i.id
+    WHERE u.id = $1
+  `, [closed.update.id]);
+  assert.equal(timestamps.match, true);
   await assert.rejects(update(f, { assignedTo: null }), { status: 409 });
+  const reassigned = await update(f, { assignedTo: f.otherTech });
+  assert.deepEqual(reassigned.incident.closed_at, closed.incident.closed_at);
   const reopened = await update(f, { status: 'open' });
   assert.equal(reopened.incident.closed_at, null);
   assert.equal(reopened.update.previous_status, 'closed');
+});
+
+integration('PostgreSQL rejects inconsistent closures even outside the API', async () => {
+  const f = await fixture();
+  await assert.rejects(pool.query(
+    "UPDATE incidents SET status = 'closed', closed_at = now() WHERE id = $1", [f.incident],
+  ), { code: '23514', constraint: 'incidents_closed_requires_assignee' });
+  await assert.rejects(pool.query(
+    "UPDATE incidents SET status = 'closed', assigned_to = $2 WHERE id = $1", [f.incident, f.tech],
+  ), { code: '23514', constraint: 'incidents_closed_at_matches_status' });
+  await assert.rejects(pool.query(
+    'UPDATE incidents SET closed_at = now() WHERE id = $1', [f.incident],
+  ), { code: '23514', constraint: 'incidents_closed_at_matches_status' });
 });
 
 integration('history exposes author and assignee names in chronological order without password hashes', async () => {
